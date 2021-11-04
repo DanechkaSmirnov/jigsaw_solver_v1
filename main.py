@@ -3,7 +3,7 @@ import numpy as np
 from math import sqrt
 from numpy import dot
 from numpy.linalg import norm
-
+import sys
 
 def open_file(path):
     file = open(path).read().split()
