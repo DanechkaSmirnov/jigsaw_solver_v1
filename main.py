@@ -1,217 +1,175 @@
-import glob
+from math import inf
 import numpy as np
-from math import sqrt
-from numpy import dot
-from numpy.linalg import norm
+import cv2
+import glob
+import matplotlib.pyplot as plt
 import sys
 
-def open_file(path):
-    file = open(path).read().split()
-    if file[1] == '#':
-        for i in range(5):
-            file.pop(1)
-    file = tuple(map(int, file[1:]))
-    size = list(file[0:2])
-    size.append(3)
-    img = np.reshape(file[3:], size)
-    return img.tolist()
 
-def img_in_folder(path):
-    return glob.glob(f"{path}*.ppm")
+def read_folder(folder):
+    file_names = sorted(glob.glob(f"{folder}*.ppm"))
+    imgs = []
+    for path in file_names:
+        imgs.append(cv2.imread(path))
+    return imgs
 
-def get_corns(img):
-    up = img[0]
-    right = [row[-1] for row in img]
-    down = img[-1][::-1]
-    left = [row[0] for row in img[::-1]]
+def get_edges(img):
+    img_len = len(img)
+    up = img[0:1, :, :].reshape((1, img_len, 3))
+    right = img[:, -1:-2:-1, :].reshape((1, img_len, 3))
+    down = img[-1:-2:-1, ::-1, :].reshape((1, img_len, 3))
+    left = img[::-1, 0:1, :].reshape((1, img_len, 3))
     return [up, right, down, left]
 
-def rgb_distance(corn1, corn2):
-    err = 0
-    corn2 = corn2[::-1]
-    for i in range(len(corn1)):
-        err+=(abs(corn1[i][0] - corn2[i][0])+abs(corn1[i][1] - corn2[i][1])+abs(corn1[i][2] - corn2[i][2]))
-    return err
+def paired_cons(cons):
+    cons_raw = [[x[0], x[1]] for x in cons]
+    pairs = [x for x in cons if [x[1], x[0]] in cons_raw]
+    return pairs
+class Graph:
+    def __init__(self, vertices):
+        self.V = vertices
+        self.graph = []
+
+    def add_edge(self, u, v, w):
+        self.graph.append([u, v, w])
 
 
-def find_min(matrix):
-    mymin = min([min(r) for r in matrix])
-    for i in range(len(matrix)):
-        if mymin in matrix[i]:
-            return i, matrix[i].index(mymin), mymin
-            break
-            
-            
-def get_index_to_inf(a, b, x):
-    indexes = []
-    a = a//4
-    b = b//4
-    list1 = [i for i in range(a*4, (a+1)*4)]
-    list2 = [i for i in range(b*4, (b+1)*4)] 
-    for i in list1:
-        for j in list2:
-            indexes.append([i, j])
-            indexes.append([j, i])
-    for i in range(x):
-        indexes.append([i, a])
-        indexes.append([a, i])
-        indexes.append([i, b])
-        indexes.append([b, i])
-    return indexes
+    def find(self, parent, i):
+        if parent[i] == i:
+            return i
+        return self.find(parent, parent[i])
 
-def count_of_puzzles(matr):
-    count = 0
-    for stripe in matr:
-        count+= len(stripe)-stripe.count(None)
-    print(count)
-    
-def get_index_in_jigsaw(matr, num):
-    for i in range(len(matr)):
-        if num in matr[i]:
-            return i, matr[i].index(num)
-        
-def get_rotation(p1, p2):
-    #p1 - puzzle, p2 - side
-    if p1[0] == p2[0]:
-        if p1[1] + 1 == p2[1]:
-            rotation = 3
-        elif p1[1] - 1 == p2[1]:
-            rotation = 1
-    elif p1[1] == p2[1]:
-        if p1[0] + 1 == p2[0]:
-            rotation = 0
-        elif p1[0]-1==p2[0]:
-            rotation = 2
-    return rotation
-        
-    
-def get_string(jig):
+    def apply_union(self, parent, rank, x, y):
+        xroot = self.find(parent, x)
+        yroot = self.find(parent, y)
+        if rank[xroot] < rank[yroot]:
+            parent[xroot] = yroot
+        elif rank[xroot] > rank[yroot]:
+            parent[yroot] = xroot
+        else:
+            parent[yroot] = xroot
+            rank[xroot] += 1
+
+    def kruskal_algo(self):
+        result = []
+        i, e = 0, 0
+        self.graph = sorted(self.graph, key=lambda item: item[2])
+        parent = []
+        rank = []
+        for node in range(self.V):
+            parent.append(node)
+            rank.append(0)
+        while e < self.V - 1:
+            u, v, w = self.graph[i]
+            i = i + 1
+            x = self.find(parent, u)
+            y = self.find(parent, v)
+            if x != y:
+                e = e + 1
+                result.append([u, v, w])
+                self.apply_union(parent, rank, x, y)
+        res = []
+        for u, v, length in result:
+            res.append([u, v, length])
+        return res
+
+def get_image(jig):
     res = []
     for string in jig:
-        res.append([i for i in string if isinstance(i, str)])
+        res.append([i for i in string if isinstance(i, int)])
     answ = [e for e in res if e]
     return answ
 
-def rotateMatrix(mat):
-    return list(zip(*mat))[::-1]
-
-def first_angle(mat):
-    for i in range(len(mat)):
-        if None in mat[i]:
-            return [i, mat[i].index(None)]
-        
-def solve_puzzle(folder):
-    folder = '/Users/danny/Downloads/data/0000_0003_0002/tiles/'
-    file_names = sorted(img_in_folder(folder))
-    imgs = []
-    for path in file_names:
-        imgs.append(open_file(path))
+def solve(folder):
+    imgs = read_folder(folder)
+    num_of_tiles = len(imgs)
     corns = []
     for img in imgs:
-        corns.extend(get_corns(img))
+        corns.extend(get_edges(img))
 
 
-    from math import inf
-    adj_matrix = [[None for _ in range(len(corns))] for _ in range(len(corns))]
-    inf_matrix = [[inf for _ in range(len(corns))] for _ in range(len(corns))]
-    for i in range(len(corns)):
-        for j in range(i, len(corns)):
-            if i//4 == j//4:
+
+    adj_matrix = [[None for _ in range(num_of_tiles*4)] for _ in range(num_of_tiles*4)]
+    for i in range(num_of_tiles*4):
+        for j in range(num_of_tiles*4):
+            if i//4 != j//4:
+                adj_matrix[i][j] = abs((corns[i][:, ::-1, :].astype(np.int8)) - corns[j].astype(np.int8)).sum()
+                adj_matrix[j][i] = adj_matrix[i][j]
+            else:
                 adj_matrix[i][j] = inf
                 adj_matrix[j][i] = inf
-            else:
 
-                adj_matrix[i][j] = round(rgb_distance(corns[i], corns[j]))
-                adj_matrix[j][i] = adj_matrix[i][j]
     cons = []
-    for i in range(len(adj_matrix)):
+    for i in range(num_of_tiles*4):
         cons.append([i, adj_matrix[i].index(min(adj_matrix[i])), min(adj_matrix[i])])
-        adj_matrix[adj_matrix[i].index(min(adj_matrix[i]))][i] = inf
 
     cons.sort(key=lambda x: x[2])
+    pairs = paired_cons(cons)
+    tiles = [[x[0]//4, x[1]//4, x[2]] for x in pairs]
+    graph = Graph(len(imgs))
+    for v in tiles:
+        graph.add_edge(*v)
+    nodes = graph.kruskal_algo()
+    cons_clean = [[x[0], x[1]] for x in cons if [x[0]//4, x[1]//4, x[2]] in nodes]
+    cons = cons_clean
 
-    num_of_puzzles = len(cons)//4
-    jigsaw = [[None for _ in range(num_of_puzzles*2+1)] for _ in range(num_of_puzzles*2+1)]
-    jigsaw[num_of_puzzles][num_of_puzzles] = f'{cons[0][0]//4}'
-    jigsaw[num_of_puzzles-1][num_of_puzzles] = cons[0][0]//4*4
-    jigsaw[num_of_puzzles][num_of_puzzles+1] = cons[0][0]//4*4+1
-    jigsaw[num_of_puzzles+1][num_of_puzzles] = cons[0][0]//4*4+2
-    jigsaw[num_of_puzzles][num_of_puzzles-1] = cons[0][0]//4*4+3
-    solved = 1
-    rotations = {cons[0][0]//4:0}
-    cord = [num_of_puzzles, num_of_puzzles]
     inserted = [cons[0][0]//4]
-    inserted_index = [cord]
-    tofind = {cons[0][0]//4*4:cord, cons[0][0]//4*4+1:cord, cons[0][0]//4*4+2:cord, cons[0][0]//4*4+3:cord}
-    while solved != num_of_puzzles:
-        father = 0
-        mother = 0
-        for line in cons:
-            if line[0]//4 in inserted:
-                father = line[1]
-                mother = line[0]
-                cons.remove(line)
+    rotated = {cons[0][0]//4:0}
+    indexes = {cons[0][0]//4:[num_of_tiles//2, num_of_tiles//2]}
+    add = []
+    while len(cons) > 0:
+        for con in cons:
+            if con[0]//4 in inserted:
+                mother = con[0]
+                father = con[1]
+                cons.remove(con)
                 break
-            elif line[1]//4 in inserted:
-                father = line[0]
-                mother = line[1]
-                cons.remove(line)
+            elif con[1]//4 in inserted:
+                mother = con[1]
+                father = con[0]
+                cons.remove(con)
                 break
-        if father//4 in inserted:
-            continue
-        fath_index = get_index_in_jigsaw(jigsaw, mother)
-        moth_index = tofind[mother]
-        if fath_index == None or moth_index == None:
-            continue
-        moth_dir = get_rotation(fath_index, tofind[mother])
-        fath_dir = ((moth_dir+2)%4+4-father%4)%4
-        jigsaw[fath_index[0]][fath_index[1]] = f'{father//4}'
-        inserted_index.append(list(fath_index))
-        rotations[father//4] = fath_dir
-        if [fath_index[0]-1, fath_index[1]] not in inserted_index:
-            jigsaw[fath_index[0]-1][fath_index[1]] = father//4*4+(-fath_dir)%4
-        if [fath_index[0], fath_index[1]+1] not in inserted_index:
-            jigsaw[fath_index[0]][fath_index[1]+1] = father//4*4+(-fath_dir+1)%4
-        if [fath_index[0]+1, fath_index[1]] not in inserted_index:
-            jigsaw[fath_index[0]+1][fath_index[1]] = father//4*4+(-fath_dir+2)%4
-        if [fath_index[0], fath_index[1]-1] not in inserted_index:
-            jigsaw[fath_index[0]][fath_index[1]-1] = father//4*4+(-fath_dir+3)%4
-        solved+=1
+        moth_dir = (mother%4 - rotated[mother//4])%4 ## 3 - 0 = 3
+        moth_index = indexes[mother//4]
+        fath_rot = ((father%4 - (moth_dir+2)%4))%4 ##3 - 1 = 2
+        rotated[father//4] = fath_rot
         inserted.append(father//4)
-        tofind[father//4*4] = fath_index
-        tofind[father//4*4+1] = fath_index
-        tofind[father//4*4+2] = fath_index
-        tofind[father//4*4+3] = fath_index
+        if moth_dir == 0:
+            indexes[father//4] = [moth_index[0]-1, moth_index[1]]
+        if moth_dir == 1:
+            indexes[father//4] = [moth_index[0], moth_index[1]+1]
+        if moth_dir == 2:
+            indexes[father//4] = [moth_index[0]+1, moth_index[1]]
+        if moth_dir == 3:
+            indexes[father//4] = [moth_index[0], moth_index[1]-1]
 
-    locations = get_string(jigsaw)
-    locations = [item for sublist in locations for item in sublist]
+    jigsaw = [[None for _ in range(num_of_tiles * 2 + 1)] for _ in range(num_of_tiles * 2 + 1)]
+    for tile in range(num_of_tiles):
+        index = indexes[tile]
+        jigsaw[index[0]][index[1]] = tile
 
+    locations = get_image(jigsaw)
+    flag = 0
+    if len(locations) > len(locations[0]):
+        locations = np.rot90(np.array(locations))
+        flag = 1
 
-    for rotor in rotations.keys():
-        if rotations[rotor] != 0:
-            for _ in range(4-rotations[rotor]):
-                imgs[rotor] = rotateMatrix(imgs[rotor])
-    if len(jigsaw) < len(jigsaw[0]):
-        jigsaw = rotateMatrix(jigsaw)
+    final_image = np.ndarray((0, 1200, 3))
 
-    final_image = [[None for _ in range(1200)] for _ in range(900)]
-    for block in locations:
-        img = imgs[int(block)]
-        pos = first_angle(final_image)
-        for i in range(len(img)):
-            for j in range(len(img[0])):
-                final_image[pos[0]+i][pos[1]+j] = img[i][j]
+    for i in rotated.keys():
+        for _ in range((rotated[i] + flag)):
+            imgs[i] = np.rot90(imgs[i])
 
+    for line in locations:
+        strip = np.ndarray((len(imgs[0]), 0, 3))
+        for block in line:
+            strip = np.append(strip, imgs[int(block)][:, :, ::-1], axis=1)
 
-    image = 'P3\n 1200 900\n 250\n'
-    for line in final_image:
-        for pixel in line:
-            image+=f'{pixel[0]} {pixel[1]} {pixel[2]} '
-        image+='\n'
-    return image
+        final_image = np.append(final_image, strip, axis=0)
+
+    plt.imshow(final_image.astype(int))
+    plt.show()
 
 if __name__ == "__main__":
     folder = sys.argv[1]
-    solve_puzzle(folder)
-    
-
+    solve(folder)
